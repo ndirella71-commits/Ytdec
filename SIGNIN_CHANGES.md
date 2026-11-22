@@ -68,3 +68,31 @@ focus lands on it (matching current YouTube TV's collapsed/expand-on-focus rail)
 a fixed, always-labelled sidebar. I didn't attempt to literally pixel-clone YouTube's own
 (trademarked) app chrome/logo — happy to keep iterating on specific screens if you point me
 at what to change next.
+
+## Update: the built-in shared OAuth client got "restricted_client"
+
+Google rejected the baked-in public client with `restricted_client`. That's a Google-side
+policy, not a bug: the YouTube Data scope is "sensitive," so the device-code ("enter this
+code on your phone") flow only works for an app Google has personally verified, or for a
+client you create yourself (where you're automatically your own project's test user). A
+shared client baked into a downloadable app can never satisfy that for arbitrary people —
+this was true the moment it needed that scope, I just hadn't hit the failure case yet.
+
+### What changed
+
+- **New primary sign-in: log in to youtube.com right in the app** (`LoginWebView.kt` /
+  `GoogleLoginScreen`), using the TV's own remote/keyboard instead of your phone. It captures
+  the session cookie once you're logged in and authenticates all requests the same way a
+  logged-in `youtube.com` browser tab does (`data/CookieAuth.kt`, Google's own `SAPISIDHASH`
+  scheme) — zero Google Cloud setup needed. `InnerTube.kt` now prefers this cookie whenever
+  it's present.
+- **The phone + code flow still exists**, under Settings → Advanced, but now only runs once
+  you've pasted in your own OAuth client id/secret (a one-time, free, ~5 minute Google Cloud
+  Console setup: a "TVs and Limited Input devices" client + enabling the YouTube Data API v3
+  on the same project). With your own client, you *are* a verified tester of your own project,
+  so it isn't blocked. The button is disabled/explained until both fields are filled in, so it
+  can't silently hit `restricted_client` again.
+
+I'm sorry about the churn here — I should have flagged upfront that a shared public client for
+this particular Google scope was likely to get blocked rather than finding out from your
+screenshot. The in-app login is the one that will keep working without any setup.

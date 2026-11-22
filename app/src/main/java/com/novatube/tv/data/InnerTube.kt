@@ -113,7 +113,8 @@ class InnerTube(private val prefs: Prefs, private val auth: Auth) {
         spec: ClientSpec,
         useAuth: Boolean = true,
     ): JSONObject = withContext(Dispatchers.IO) {
-        val token = if (useAuth) auth.accessToken() else null
+        val cookie = prefs.youtubeCookie?.takeIf { useAuth && CookieAuth.hasSession(it) }
+        val token = if (useAuth && cookie == null) auth.accessToken() else null
 
         val builder = Request.Builder()
             .url("https://www.youtube.com/youtubei/v1/$path?prettyPrint=false&key=${spec.apiKey}")
@@ -127,7 +128,15 @@ class InnerTube(private val prefs: Prefs, private val auth: Auth) {
             .post(body.toString().toRequestBody(json))
 
         prefs.visitorData?.let { builder.header("X-Goog-Visitor-Id", it) }
-        token?.let { builder.header("Authorization", "Bearer $it") }
+        if (cookie != null) {
+            // Cookie sign-in: authenticate the same way a logged-in youtube.com tab does.
+            builder.header("Cookie", cookie)
+            builder.header("X-Origin", "https://www.youtube.com")
+            builder.header("X-Goog-AuthUser", "0")
+            CookieAuth.header(cookie)?.let { builder.header("Authorization", it) }
+        } else {
+            token?.let { builder.header("Authorization", "Bearer $it") }
+        }
 
         http.newCall(builder.build()).execute().use { resp ->
             val text = resp.body?.string().orEmpty()
@@ -167,13 +176,19 @@ class InnerTube(private val prefs: Prefs, private val auth: Auth) {
     }
 
     /**
-     * Browses with the signed-in account. OAuth bearer tokens are honoured by the TV clients, so
-     * those are tried first; the web client is the fallback (it serves public data if it ignores
-     * the token). A failed attempt must never abort the whole page.
+     * Browses with the signed-in account. A cookie session is a web-origin session, so the web
+     * client is tried first when one is set; OAuth bearer tokens (from the Advanced/own-client
+     * flow) are honoured by the TV clients first instead. A failed attempt must never abort the
+     * whole page.
      */
     suspend fun browseSignedIn(browseId: String, continuation: String? = null): JSONObject {
         var last: Throwable? = null
-        for (spec in listOf(Clients.TV, Clients.WEB)) {
+        val order = if (CookieAuth.hasSession(prefs.youtubeCookie)) {
+            listOf(Clients.WEB, Clients.TV)
+        } else {
+            listOf(Clients.TV, Clients.WEB)
+        }
+        for (spec in order) {
             try {
                 return browse(browseId, continuation = continuation, spec = spec)
             } catch (t: Throwable) {

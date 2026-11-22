@@ -43,7 +43,17 @@ class Prefs(context: Context) {
         get() = sp.getString("client_secret", null)
         set(value) = sp.edit().putString("client_secret", value?.trim()).apply()
 
-    fun isSignedIn(): Boolean = !refreshToken.isNullOrEmpty()
+    /**
+     * The raw `Cookie:` header captured after signing in to youtube.com in the in-app browser.
+     * This is the primary sign-in method: it needs no Google Cloud OAuth client at all, since it
+     * authenticates requests the same way youtube.com itself does for a logged-in tab (see
+     * [CookieAuth]).
+     */
+    var youtubeCookie: String?
+        get() = sp.getString("yt_cookie", null)
+        set(value) = sp.edit().putString("yt_cookie", value).apply()
+
+    fun isSignedIn(): Boolean = !youtubeCookie.isNullOrEmpty() || !refreshToken.isNullOrEmpty()
 
     fun signOut() {
         sp.edit()
@@ -51,6 +61,7 @@ class Prefs(context: Context) {
             .remove("refresh_token")
             .remove("token_expiry")
             .remove("account_label")
+            .remove("yt_cookie")
             .apply()
     }
 }

@@ -64,10 +64,15 @@ fun SettingsScreen(
     var busy by remember { mutableStateOf(false) }
     var editing by remember { mutableStateOf<String?>(null) }
     var draft by remember { mutableStateOf("") }
+    var showBrowserLogin by remember { mutableStateOf(false) }
     val editFocus = remember { FocusRequester() }
 
-    fun startSignIn() {
+    fun startDeviceSignIn() {
         if (busy) return
+        if (prefs.clientId.isNullOrBlank() || prefs.clientSecret.isNullOrBlank()) {
+            status = "Add your own client id and secret above first."
+            return
+        }
         busy = true
         status = "Contacting Google…"
         scope.launch {
@@ -106,6 +111,21 @@ fun SettingsScreen(
                 }
             }
         }
+    }
+
+    if (showBrowserLogin) {
+        GoogleLoginScreen { cookie ->
+            showBrowserLogin = false
+            if (cookie != null) {
+                prefs.youtubeCookie = cookie
+                prefs.accountLabel = "Google account"
+                onAccountChanged(prefs.accountLabel)
+                status = "Signed in. Your subscriptions and library are now available."
+            } else {
+                status = "Sign-in cancelled."
+            }
+        }
+        return
     }
 
     if (editing != null) {
@@ -190,8 +210,10 @@ fun SettingsScreen(
                     if (isSignedIn) {
                         "Your subscriptions, library and history come from your Google account."
                     } else {
-                        "Use your phone to sign in — no password typed on this remote. " +
-                            "Browsing, search and playback work without an account too."
+                        "Sign in with your remote's D-pad, right here — Google's own \"sign in with a " +
+                            "code on your phone\" flow only works for apps Google has personally verified, " +
+                            "so a shared code-based sign-in gets refused for most people. Browsing, search " +
+                            "and playback all work without an account too."
                     },
                     color = Muted,
                     fontSize = 13.sp,
@@ -205,10 +227,7 @@ fun SettingsScreen(
                             status = "Signed out."
                         }, primary = false)
                     } else {
-                        ActionButton(
-                            if (busy) "Starting…" else "Sign in with your phone",
-                            { startSignIn() },
-                        )
+                        ActionButton("Sign in to Google", { showBrowserLogin = true })
                     }
                 }
                 if (status != null) {
@@ -221,42 +240,39 @@ fun SettingsScreen(
         val code = device
         if (code != null) {
             item {
-                SectionCard("Use your phone to sign in") {
-                    Text(
-                        "On your phone, in any browser, go to:",
-                        color = Muted,
-                        fontSize = 13.sp,
-                    )
-                    Spacer(Modifier.height(4.dp))
-                    Text(
-                        code.verificationUrl.removePrefix("https://").removePrefix("http://"),
-                        color = Color.White,
-                        fontSize = 18.sp,
-                        fontWeight = FontWeight.SemiBold,
-                    )
-                    Spacer(Modifier.height(16.dp))
-                    Text("Then enter this code:", color = Muted, fontSize = 13.sp)
-                    Spacer(Modifier.height(8.dp))
+                SectionCard("Enter this code on your phone") {
+                    NumberedStep(1, "On your phone or computer, open ${code.verificationUrl.removePrefix("https://").removePrefix("http://")}")
+                    Spacer(Modifier.height(10.dp))
+                    NumberedStep(2, "Type this code")
+                    Spacer(Modifier.height(10.dp))
                     Box(
                         Modifier
+                            .fillMaxWidth(0.85f)
                             .background(Color(0xFF262626), RoundedCornerShape(12.dp))
-                            .padding(horizontal = 24.dp, vertical = 14.dp),
+                            .padding(horizontal = 24.dp, vertical = 18.dp),
+                        contentAlignment = Alignment.Center,
                     ) {
                         Text(
                             code.userCode,
                             color = Color.White,
-                            fontSize = 36.sp,
+                            fontSize = 34.sp,
                             fontWeight = FontWeight.Bold,
-                            letterSpacing = 8.sp,
+                            letterSpacing = 6.sp,
                         )
                     }
-                    Spacer(Modifier.height(16.dp))
-                    Text(status ?: "Waiting for you to approve on your phone…", color = Muted, fontSize = 13.sp)
+                    Spacer(Modifier.height(14.dp))
+                    NumberedStep(
+                        3,
+                        "Approve the request with the Google account you want to use. " +
+                            "This TV signs in automatically — leave this screen open.",
+                    )
+                    Spacer(Modifier.height(10.dp))
+                    Text(status ?: "Waiting for approval…", color = Muted, fontSize = 13.sp)
                     Spacer(Modifier.height(14.dp))
                     Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                        ActionButton("Open this page here instead", onClick = {
+                        ActionButton("Open on this TV", onClick = {
                             openInAppBrowser(context, code.verificationUrl)
-                        }, primary = false)
+                        })
                         ActionButton("Cancel", {
                             device = null
                             busy = false
@@ -269,16 +285,21 @@ fun SettingsScreen(
 
         item {
             var showAdvanced by remember { mutableStateOf(false) }
-            SectionCard("Advanced") {
+            val hasOwnClient = !prefs.clientId.isNullOrBlank() && !prefs.clientSecret.isNullOrBlank()
+            SectionCard("Advanced: sign in with a phone + code instead") {
                 Text(
-                    "Sign-in works out of the box. If you'd rather use your own Google Cloud OAuth " +
-                        "client (type \"TVs and Limited Input devices\") instead of the app's built-in one, " +
-                        "you can set it here.",
+                    "This needs your own free Google Cloud OAuth client — Google only allows the " +
+                        "\"show a code, approve on your phone\" flow for a client it personally " +
+                        "verified or one you made yourself (that's also why the button above signs in " +
+                        "with the remote instead: no shared client can satisfy that for every user). " +
+                        "Once you've created one (OAuth client, type \"TVs and Limited Input devices\", " +
+                        "with the YouTube Data API v3 enabled on the same project) and set it here, you " +
+                        "can use the code flow instead of typing your password on the TV.",
                     color = Muted,
                     fontSize = 13.sp,
                 )
                 Spacer(Modifier.height(10.dp))
-                ActionButton(if (showAdvanced) "Hide" else "Use my own OAuth client", {
+                ActionButton(if (showAdvanced) "Hide" else "Set up my own OAuth client", {
                     showAdvanced = !showAdvanced
                 }, primary = false)
                 if (showAdvanced) {
@@ -290,13 +311,29 @@ fun SettingsScreen(
                     CredentialRow("Client secret", if (prefs.clientSecret.isNullOrEmpty()) null else "••••••••") {
                         editing = "secret"
                     }
-                    if (!prefs.clientId.isNullOrBlank() || !prefs.clientSecret.isNullOrBlank()) {
-                        Spacer(Modifier.height(10.dp))
-                        ActionButton("Clear (use built-in sign-in)", {
-                            prefs.clientId = null
-                            prefs.clientSecret = null
-                            status = "Cleared. Sign-in will use the app's built-in client again."
-                        }, primary = false)
+                    Spacer(Modifier.height(14.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        ActionButton(
+                            if (busy) "Starting…" else "Sign in with a code",
+                            { startDeviceSignIn() },
+                            primary = hasOwnClient,
+                        )
+                        if (hasOwnClient) {
+                            ActionButton("Clear client", {
+                                prefs.clientId = null
+                                prefs.clientSecret = null
+                                status = "Cleared."
+                            }, primary = false)
+                        }
+                    }
+                    if (!hasOwnClient) {
+                        Spacer(Modifier.height(8.dp))
+                        Text(
+                            "Add both values above first — without them this falls back to a shared " +
+                                "client, which Google will refuse with \"restricted_client\".",
+                            color = Muted,
+                            fontSize = 12.sp,
+                        )
                     }
                 }
             }
@@ -329,6 +366,20 @@ private fun SectionCard(title: String, content: @Composable () -> Unit) {
         Text(title, color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
         Spacer(Modifier.height(10.dp))
         content()
+    }
+}
+
+@Composable
+private fun NumberedStep(number: Int, text: String) {
+    Row(verticalAlignment = Alignment.Top) {
+        Text(
+            "$number.",
+            color = Color.White,
+            fontSize = 14.sp,
+            fontWeight = FontWeight.SemiBold,
+            modifier = Modifier.width(22.dp),
+        )
+        Text(text, color = Muted, fontSize = 14.sp, modifier = Modifier.fillMaxWidth(0.82f))
     }
 }
 
